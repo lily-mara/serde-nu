@@ -33,7 +33,7 @@
 
 use bigdecimal::{BigDecimal, FromPrimitive};
 use nu_protocol::value::dict::Dictionary;
-use nu_protocol::{Primitive, UntaggedValue, Value};
+use nu_protocol::{Primitive, ReturnSuccess, ReturnValue, UntaggedValue, Value};
 use serde::Serialize;
 
 #[cfg(test)]
@@ -66,11 +66,32 @@ impl serde::ser::Error for Error {
     }
 }
 
+/// Convert any value into a `nu_protocol::Value`
 pub fn to_value<T>(value: T) -> Result<Value, Error>
 where
     T: Serialize,
 {
     value.serialize(&Serializer {})
+}
+
+/// Convenience function that takes an iterator over values and turns them into
+/// a `Vec<ReturnValue>` (all successful). This is necessary for the return
+/// signatures of most functions in the `nu_plugin::Plugin` trait.
+pub fn to_success_return_values<T>(
+    values: impl IntoIterator<Item = T>,
+) -> Result<Vec<ReturnValue>, Error>
+where
+    T: Serialize,
+{
+    let mut out_values = Vec::new();
+
+    for value in values {
+        let value = value.serialize(&Serializer {})?;
+
+        out_values.push(ReturnValue::Ok(ReturnSuccess::Value(value)));
+    }
+
+    Ok(out_values)
 }
 
 struct Serializer {}

@@ -1,3 +1,5 @@
+use crate::to_success_return_values;
+
 use super::to_value;
 use insta::assert_debug_snapshot;
 use serde::Serialize;
@@ -35,4 +37,9 @@ fn it_works_with_complex_structs() {
         y: 38.2,
         map
     }));
+}
+
+#[test]
+fn it_serializes_return_value_list() {
+    assert_debug_snapshot!(to_success_return_values(vec![4i32, 10, 8843234, 100]));
 }
