@@ -2,6 +2,9 @@
 name = "serde-nu"
 version = "0.1.0"
 edition = "2018"
+description = "Turn any value into a nu-protocol::Value with serde"
+license = "MIT"
+repository = "https://github.com/lily-mara/serde-nu"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
