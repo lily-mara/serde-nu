@@ -1,17 +1,18 @@
 [package]
 name = "serde-nu"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2018"
 description = "Turn any value into a nu-protocol::Value with serde"
 license = "MIT"
 repository = "https://github.com/lily-mara/serde-nu"
+documentation = "https://docs.rs/serde-nu"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
+bigdecimal = "0.2"
 nu-protocol = "0.34"
+nu-source = "0.34"
 serde = "1"
 thiserror = "1"
-bigdecimal = "0.2"
 
 [dev-dependencies]
 insta = "1"

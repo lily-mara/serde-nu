@@ -3,7 +3,8 @@
 //! implemeentation and the one using `serde_nu`.
 //!
 //! ```
-//! use nu_protocol::{Dictionary, UntaggedValue, Value, Primitive};
+//! use nu_protocol::{Dictionary, Primitive, UntaggedValue, Value};
+//! use nu_source::Tag;
 //! use serde::Serialize;
 //!
 //! #[derive(Serialize)]
@@ -12,28 +13,38 @@
 //!     name: String,
 //! }
 //!
-//! fn manual(s: MyStruct) -> Value {
+//! fn manual(s: MyStruct, tag: Tag) -> Value {
 //!     let mut dict = Dictionary::default();
 //!     dict.insert(
 //!         "index".into(),
-//!         Value::from(UntaggedValue::Primitive(Primitive::Int(s.index as i64))),
+//!         Value {
+//!             value: UntaggedValue::Primitive(Primitive::Int(s.index as i64)),
+//!             tag: tag.clone(),
+//!         },
 //!     );
 //!     dict.insert(
 //!         "name".into(),
-//!         Value::from(UntaggedValue::Primitive(Primitive::String(s.name))),
+//!         Value {
+//!             value: UntaggedValue::Primitive(Primitive::String(s.name)),
+//!             tag: tag.clone(),
+//!         },
 //!     );
 //!
-//!     Value::from(UntaggedValue::Row(dict))
+//!     Value {
+//!         value: UntaggedValue::Row(dict),
+//!         tag,
+//!     }
 //! }
 //!
-//! fn auto(s: &MyStruct) -> Value {
-//!     serde_nu::to_value(s).unwrap()
+//! fn auto(s: &MyStruct, tag: Tag) -> Value {
+//!     serde_nu::to_value(s, tag).unwrap()
 //! }
 //! ```
 
 use bigdecimal::{BigDecimal, FromPrimitive};
 use nu_protocol::value::dict::Dictionary;
 use nu_protocol::{Primitive, ReturnSuccess, ReturnValue, UntaggedValue, Value};
+use nu_source::Tag;
 use serde::Serialize;
 
 #[cfg(test)]
@@ -67,11 +78,11 @@ impl serde::ser::Error for Error {
 }
 
 /// Convert any value into a `nu_protocol::Value`
-pub fn to_value<T>(value: T) -> Result<Value, Error>
+pub fn to_value<T>(value: T, tag: impl Into<Tag>) -> Result<Value, Error>
 where
     T: Serialize,
 {
-    value.serialize(&Serializer {})
+    value.serialize(&Serializer { tag: tag.into() })
 }
 
 /// Convenience function that takes an iterator over values and turns them into
@@ -79,14 +90,17 @@ where
 /// signatures of most functions in the `nu_plugin::Plugin` trait.
 pub fn to_success_return_values<T>(
     values: impl IntoIterator<Item = T>,
+    tag: impl Into<Tag>,
 ) -> Result<Vec<ReturnValue>, Error>
 where
     T: Serialize,
 {
+    let tag = tag.into();
+
     let mut out_values = Vec::new();
 
     for value in values {
-        let value = value.serialize(&Serializer {})?;
+        let value = to_value(&value, &tag)?;
 
         out_values.push(ReturnValue::Ok(ReturnSuccess::Value(value)));
     }
@@ -94,7 +108,9 @@ where
     Ok(out_values)
 }
 
-struct Serializer {}
+struct Serializer {
+    tag: Tag,
+}
 
 struct SeqSerializer<'a> {
     seq: Vec<Value>,
@@ -105,6 +121,15 @@ struct MapSerializer<'a> {
     dict: Dictionary,
     serializer: &'a Serializer,
     current_key: Option<String>,
+}
+
+impl Serializer {
+    fn value(&self, untagged: UntaggedValue) -> Value {
+        Value {
+            value: untagged,
+            tag: self.tag.clone(),
+        }
+    }
 }
 
 impl<'a> serde::ser::SerializeSeq for SeqSerializer<'a> {
@@ -121,7 +146,7 @@ impl<'a> serde::ser::SerializeSeq for SeqSerializer<'a> {
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Table(self.seq)))
+        Ok(self.serializer.value(UntaggedValue::Table(self.seq)))
     }
 }
 
@@ -139,7 +164,7 @@ impl<'a> serde::ser::SerializeTuple for SeqSerializer<'a> {
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Table(self.seq)))
+        Ok(self.serializer.value(UntaggedValue::Table(self.seq)))
     }
 }
 
@@ -157,7 +182,7 @@ impl<'a> serde::ser::SerializeTupleStruct for SeqSerializer<'a> {
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Table(self.seq)))
+        Ok(self.serializer.value(UntaggedValue::Table(self.seq)))
     }
 }
 
@@ -176,7 +201,7 @@ impl<'a> serde::ser::SerializeTupleVariant for SeqSerializer<'a> {
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Table(self.seq)))
+        Ok(self.serializer.value(UntaggedValue::Table(self.seq)))
     }
 }
 
@@ -212,7 +237,7 @@ impl<'a> serde::ser::SerializeMap for MapSerializer<'a> {
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Row(self.dict)))
+        Ok(self.serializer.value(UntaggedValue::Row(self.dict)))
     }
 }
 
@@ -236,7 +261,7 @@ impl<'a> serde::ser::SerializeStruct for MapSerializer<'a> {
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Row(self.dict)))
+        Ok(self.serializer.value(UntaggedValue::Row(self.dict)))
     }
 }
 
@@ -260,7 +285,7 @@ impl<'a> serde::ser::SerializeStructVariant for MapSerializer<'a> {
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Row(self.dict)))
+        Ok(self.serializer.value(UntaggedValue::Row(self.dict)))
     }
 }
 
@@ -296,89 +321,67 @@ impl<'a> serde::Serializer for &'a Serializer {
     type SerializeStructVariant = MapSerializer<'a>;
 
     fn serialize_bool(self, v: bool) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Primitive(Primitive::Boolean(v))))
+        Ok(self.value(UntaggedValue::Primitive(Primitive::Boolean(v))))
     }
 
     fn serialize_i8(self, v: i8) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Primitive(Primitive::Int(
-            v as i64,
-        ))))
+        Ok(self.value(UntaggedValue::Primitive(Primitive::Int(v as i64))))
     }
 
     fn serialize_i16(self, v: i16) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Primitive(Primitive::Int(
-            v as i64,
-        ))))
+        Ok(self.value(UntaggedValue::Primitive(Primitive::Int(v as i64))))
     }
 
     fn serialize_i32(self, v: i32) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Primitive(Primitive::Int(
-            v as i64,
-        ))))
+        Ok(self.value(UntaggedValue::Primitive(Primitive::Int(v as i64))))
     }
 
     fn serialize_i64(self, v: i64) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Primitive(Primitive::Int(
-            v as i64,
-        ))))
+        Ok(self.value(UntaggedValue::Primitive(Primitive::Int(v as i64))))
     }
 
     fn serialize_u8(self, v: u8) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Primitive(Primitive::Int(
-            v as i64,
-        ))))
+        Ok(self.value(UntaggedValue::Primitive(Primitive::Int(v as i64))))
     }
 
     fn serialize_u16(self, v: u16) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Primitive(Primitive::Int(
-            v as i64,
-        ))))
+        Ok(self.value(UntaggedValue::Primitive(Primitive::Int(v as i64))))
     }
 
     fn serialize_u32(self, v: u32) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Primitive(Primitive::Int(
-            v as i64,
-        ))))
+        Ok(self.value(UntaggedValue::Primitive(Primitive::Int(v as i64))))
     }
 
     fn serialize_u64(self, v: u64) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Primitive(Primitive::BigInt(
-            v.into(),
-        ))))
+        Ok(self.value(UntaggedValue::Primitive(Primitive::BigInt(v.into()))))
     }
 
     fn serialize_f32(self, v: f32) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Primitive(Primitive::Decimal(
+        Ok(self.value(UntaggedValue::Primitive(Primitive::Decimal(
             BigDecimal::from_f32(v).ok_or(Error::F32BigDecimalError(v))?,
         ))))
     }
 
     fn serialize_f64(self, v: f64) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Primitive(Primitive::Decimal(
+        Ok(self.value(UntaggedValue::Primitive(Primitive::Decimal(
             BigDecimal::from_f64(v).ok_or(Error::F64BigDecimalError(v))?,
         ))))
     }
 
     fn serialize_char(self, v: char) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Primitive(Primitive::String(
-            v.into(),
-        ))))
+        Ok(self.value(UntaggedValue::Primitive(Primitive::String(v.into()))))
     }
 
     fn serialize_str(self, v: &str) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Primitive(Primitive::String(
-            v.into(),
-        ))))
+        Ok(self.value(UntaggedValue::Primitive(Primitive::String(v.into()))))
     }
 
     fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Primitive(Primitive::Binary(
-            v.into(),
-        ))))
+        Ok(self.value(UntaggedValue::Primitive(Primitive::Binary(v.into()))))
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-        Ok(Value::from(UntaggedValue::Primitive(Primitive::Nothing)))
+        Ok(self.value(UntaggedValue::Primitive(Primitive::Nothing)))
     }
 
     fn serialize_some<T: ?Sized>(self, value: &T) -> Result<Self::Ok, Self::Error>
@@ -390,12 +393,12 @@ impl<'a> serde::Serializer for &'a Serializer {
 
     fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
         // TODO: is this OK?
-        Ok(Value::from(UntaggedValue::Primitive(Primitive::Nothing)))
+        Ok(self.value(UntaggedValue::Primitive(Primitive::Nothing)))
     }
 
     fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok, Self::Error> {
         // TODO: is this OK?
-        Ok(Value::from(UntaggedValue::Primitive(Primitive::Nothing)))
+        Ok(self.value(UntaggedValue::Primitive(Primitive::Nothing)))
     }
 
     fn serialize_unit_variant(
@@ -405,7 +408,7 @@ impl<'a> serde::Serializer for &'a Serializer {
         _variant: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
         // TODO: is this OK?
-        Ok(Value::from(UntaggedValue::Primitive(Primitive::Nothing)))
+        Ok(self.value(UntaggedValue::Primitive(Primitive::Nothing)))
     }
 
     fn serialize_newtype_struct<T: ?Sized>(
